@@ -1,66 +1,78 @@
 <?php
+// file input
+$dorkFile = __DIR__ . '/dork.txt';
+$uaFile   = __DIR__ . '/ua.txt';
 
-$dorkFile = __DIR__ . "/dork.txt";
-$UserAgent   = __DIR__ . "/ua.txt";
+$dorks = [];
+if (file_exists($dorkFile)) {
+    $dorks = array_filter(array_map('trim', file($dorkFile)));
+}
 
-$dorks = file_exists($dorkFile)
-    ? array_filter(array_map("trim", file($dorkFile)))
-    : [];
+// load file UA
+$uaList = [];
+if (file_exists($uaFile)) {
+    $uaList = array_filter(array_map('trim', file($uaFile)));
+}
 
-$UA_LIST = file_exists($UserAgent)
-    ? array_filter(array_map("trim", file($UserAgent)))
-    : [];
-
-if (!$UA_LIST) {
-    $UA_LIST = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
-        "Mozilla/5.0 (X11; Linux x86_64) Firefox/118.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15",
+// fallback
+if (!$uaList) {
+    $uaList = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'Mozilla/5.0 (X11; Linux x86_64)',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X)',
     ];
 }
 
 $results = [];
-$delay = 3;
+$delay   = 3;
 
-function randUA($UA_LIST) {
-    return $UA_LIST[array_rand($UA_LIST)];}
+// random UA 
+function randUA($list) {
+    return $list[array_rand($list)];
+}
 
-function fetch($url, $UA_LIST) {
+// curl fetch 
+function fetch($url, $uaList) {
     $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => $url,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_TIMEOUT => 25,
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_USERAGENT => randUA($UA_LIST),
-    ]);
-    $html = curl_exec($ch);
+
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_USERAGENT, randUA($uaList));
+
+    $out = curl_exec($ch);
     curl_close($ch);
-    return $html;
+
+    return $out;
 }
 
 function extractUrls($html) {
-    $urls = [];
-    if (!$html) return $urls;
+    if (!$html) return [];
 
     preg_match_all('/<a href="(https?:\/\/[^"]+)"/i', $html, $m);
+    $out = [];
+
     foreach ($m[1] as $u) {
         if (strpos($u, 'bing.com') !== false) continue;
-        $urls[] = preg_replace('/&.*$/', '', $u);
+        $out[] = preg_replace('/&.*$/', '', $u);
     }
-    return array_unique($urls);
+
+    return array_unique($out);
 }
 
-if ($_SERVER["REQUEST_METHOD"] === "POST") {
-    $single = trim($_POST["single"] ?? "");
-    $mass   = trim($_POST["mass"] ?? "");
+// handle post
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $targets = [];
 
-    if ($single) $targets[] = $single;
-    if ($mass) {
-        foreach (explode("\n", $mass) as $l) {
+    if (!empty($_POST['single'])) {
+        $targets[] = trim($_POST['single']);
+    }
+
+    if (!empty($_POST['mass'])) {
+        foreach (explode("\n", $_POST['mass']) as $l) {
             $l = trim($l);
             if ($l) $targets[] = $l;
         }
@@ -69,71 +81,25 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $targets = array_unique($targets);
 
     foreach ($targets as $t) {
+
+        // normalize target
         $t = preg_replace('#^https?://#', '', $t);
         $t = preg_replace('#/.*$#', '', $t);
 
         foreach ($dorks as $d) {
-            $q = urlencode("site:$t $d");
-            $html = fetch("https://www.bing.com/search?q=", $UA_LIST);
+
+            $q   = urlencode("site:$t $d");
+            $url = "https://www.bing.com/search?q={$q}";
+
+            
+            $html = fetch($url, $uaList);
+
             foreach (extractUrls($html) as $u) {
-                $results[$u] = true;
+                $results[$u] = 1;
             }
+
             sleep($delay);
         }
     }
 }
 ?>
-
-<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Dorking Tools Made by AnotherSecurity</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-
-<body class="bg-light text-dark">
-
-<div class="container py-4">
-
-    <h3 class="text-center mb-4 fw-bold">Dorking Tools Made by AnotherSecurity</h3>
-
-    <form method="post" class="card shadow-sm mb-4">
-        <div class="card-body">
-
-            <div class="mb-3">
-                <label class="form-label">Single Target</label>
-                <input type="text" name="single" class="form-control" placeholder="example.com">
-            </div>
-
-            <div class="mb-3">
-                <label class="form-label">Mass Target</label>
-                <textarea name="mass" class="form-control" rows="4"></textarea>
-            </div>
-
-            <button class="btn btn-dark w-100 fw-bold">
-                RUN DORKING
-            </button>
-
-        </div>
-    </form>
-
-    <?php if ($results): ?>
-    <div class="card shadow-sm">
-        <div class="card-header fw-bold">
-            Log Output (<?= count($results) ?> URLs)
-        </div>
-        <div class="card-body">
-            <pre class="small mb-0"><?php
-                foreach (array_keys($results) as $u) {
-                    echo htmlspecialchars($u) . "\n";
-                }
-            ?></pre>
-        </div>
-    </div>
-    <?php endif; ?>
-
-</div>
-
-</body>
-</html>
